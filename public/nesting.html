@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Nesting – LPBF Optimizer</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<div class="app-layout">
+
+    <nav class="sidebar">
+        <div class="sidebar-logo"><h2>⚙️ LPBF Optimizer</h2><p>Produktionsplanung</p></div>
+        <div class="sidebar-nav">
+            <a href="/static/dashboard.html"    class="nav-item"><span class="icon">📊</span> Dashboard</a>
+            <a href="/static/inquiry.html"       class="nav-item"><span class="icon">📋</span> Anfragen</a>
+            <a href="/static/buildjobs.html"     class="nav-item"><span class="icon">🏗️</span> Build-Jobs</a>
+            <a href="/static/nesting.html"       class="nav-item active"><span class="icon">🔲</span> Nesting</a>
+            <a href="/static/notifications.html" class="nav-item"><span class="icon">✉️</span> E-Mail-Entwürfe</a>
+        </div>
+        <div class="sidebar-footer">
+            <span id="user-name"></span>
+            <a href="#" onclick="logout()" style="color:rgba(255,255,255,0.4);font-size:12px;text-decoration:none;">Abmelden</a>
+        </div>
+    </nav>
+
+    <div class="main-content">
+        <div class="topbar">
+            <h1>Nesting-Algorithmus</h1>
+        </div>
+        <div class="page-body">
+
+            <div id="alert-area"></div>
+
+            <!-- Trigger Nesting -->
+            <div class="card">
+                <div class="card-title">🔲 Nesting ausführen</div>
+                <p style="color:var(--text-muted);margin-bottom:16px;font-size:14px">
+                    Wählen Sie einen offenen Build-Job aus. Der Algorithmus prüft alle ausstehenden Anfragen
+                    mit definierter XY-Fläche und weist passende automatisch zu.
+                </p>
+                <div style="display:flex;gap:12px;align-items:flex-end">
+                    <div class="form-group" style="flex:1;max-width:320px">
+                        <label>Build-Job auswählen</label>
+                        <select id="job-select">
+                            <option value="">– Build-Job wählen –</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-accent" onclick="runNesting()">▶ Nesting starten</button>
+                </div>
+
+                <div id="nesting-result" style="display:none;margin-top:20px"></div>
+            </div>
+
+            <!-- Nesting Log -->
+            <div class="card">
+                <div class="card-title">📜 Nesting-Protokoll</div>
+                <div style="margin-bottom:12px;display:flex;gap:10px">
+                    <select id="filter-job" onchange="loadLog()" style="padding:7px 12px;border:1px solid var(--border);border-radius:6px;font-size:14px">
+                        <option value="">Alle Build-Jobs</option>
+                    </select>
+                </div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Zeitpunkt</th>
+                                <th>Build-Job</th>
+                                <th>Anfrage</th>
+                                <th>Entscheidung</th>
+                                <th>Fläche vorher [cm²]</th>
+                                <th>Genutzt [cm²]</th>
+                                <th>Fläche nachher [cm²]</th>
+                                <th>KI-Begründung</th>
+                            </tr>
+                        </thead>
+                        <tbody id="log-list">
+                            <tr><td colspan="8" style="text-align:center;color:var(--text-muted)">Lade Protokoll...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<script src="/static/js/auth.js"></script>
+<script>
+    requireAuth();
+    setUserName();
+    loadJobSelects();
+    loadLog();
+
+    async function loadJobSelects() {
+        const res = await apiFetch('/api/buildjobs/');
+        if (!res) return;
+        const jobs = await res.json();
+        const openJobs = jobs.filter(j => ['open','planned'].includes(j.status));
+
+        const sel = document.getElementById('job-select');
+        const filterSel = document.getElementById('filter-job');
+
+        openJobs.forEach(j => {
+            sel.innerHTML += `<option value="${j.job_id}">${j.job_name} (${j.fill_percent}% belegt)</option>`;
+        });
+
+        jobs.forEach(j => {
+            filterSel.innerHTML += `<option value="${j.job_id}">${j.job_name}</option>`;
+        });
+    }
+
+    async function runNesting() {
+        const jobId = document.getElementById('job-select').value;
+        if (!jobId) {
+            showAlert('alert-area', 'Bitte einen Build-Job auswählen.', 'error');
+            return;
+        }
+
+        const resultDiv = document.getElementById('nesting-result');
+        resultDiv.style.display = 'block';
+        resultDiv.innerHTML = '<div class="alert alert-info">⏳ Nesting wird ausgeführt...</div>';
+
+        const res = await apiFetch(`/api/nesting/run/${jobId}`, { method: 'POST' });
+        if (!res) return;
+        const data = await res.json();
+
+        if (!res.ok) {
+            resultDiv.innerHTML = `<div class="alert alert-error">${data.detail}</div>`;
+            return;
+        }
+
+        const nestedHtml = data.nested.length > 0
+            ? data.nested.map(n => `<li>✅ <strong>${n.inquiry_name}</strong> – ${formatNumber(n.surface_used_cm2, 2)} cm² genutzt, noch ${formatNumber(n.available_after_cm2, 2)} cm² verfügbar</li>`).join('')
+            : '<li style="color:var(--text-muted)">Keine neuen Anfragen eingepasst.</li>';
+
+        const rejectedHtml = data.rejected_no_space.length > 0
+            ? data.rejected_no_space.map(r => `<li>❌ <strong>${r.inquiry_name}</strong> – benötigt ${formatNumber(r.required_cm2, 2)} cm², nur ${formatNumber(r.available_cm2, 2)} cm² verfügbar</li>`).join('')
+            : '';
+
+        resultDiv.innerHTML = `
+            <div class="alert alert-success">
+                <strong>Nesting abgeschlossen</strong> – ${data.nested_count} Anfragen eingepasst, ${data.rejected_count} abgelehnt.
+                Plattformauslastung: <strong>${data.fill_percent}%</strong>
+            </div>
+            <h4 style="margin-bottom:8px">Eingepasste Anfragen:</h4>
+            <ul style="padding-left:20px;margin-bottom:12px;font-size:14px">${nestedHtml}</ul>
+            ${rejectedHtml ? `<h4 style="margin-bottom:8px">Abgelehnte Anfragen (kein Platz):</h4><ul style="padding-left:20px;font-size:14px">${rejectedHtml}</ul>` : ''}
+        `;
+
+        loadLog();
+    }
+
+    async function loadLog() {
+        const jobId = document.getElementById('filter-job').value;
+        const url = `/api/nesting/log${jobId ? '?job_id=' + jobId : ''}`;
+        const res = await apiFetch(url);
+        if (!res) return;
+        const logs = await res.json();
+        const tbody = document.getElementById('log-list');
+
+        if (logs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted)">Kein Protokoll vorhanden</td></tr>';
+            return;
+        }
+
+        const decisionLabel = {
+            'nested':                    '<span class="badge badge-combined">Eingepasst</span>',
+            'rejected_no_space':         '<span class="badge badge-pending">Kein Platz</span>',
+            'rejected_deadline':         '<span class="badge badge-pending">Lieferdatum</span>',
+            'pending_customer_approval': '<span class="badge badge-draft">Kundenzustimmung</span>',
+        };
+
+        tbody.innerHTML = logs.map(l => `
+            <tr>
+                <td style="font-size:12px;color:var(--text-muted)">${new Date(l.decided_at).toLocaleString('de-DE')}</td>
+                <td>${l.job_name || '–'}</td>
+                <td>${l.inquiry_name || '–'}</td>
+                <td>${decisionLabel[l.decision] || l.decision}</td>
+                <td>${l.available_surface_before_cm2 ? formatNumber(l.available_surface_before_cm2) : '–'}</td>
+                <td>${l.surface_used_cm2 ? formatNumber(l.surface_used_cm2) : '–'}</td>
+                <td>${l.available_surface_after_cm2 ? formatNumber(l.available_surface_after_cm2) : '–'}</td>
+                <td style="font-size:13px;max-width:300px">${l.gpt_reasoning_summary || '–'}</td>
+            </tr>
+        `).join('');
+    }
+</script>
+</body>
+</html>

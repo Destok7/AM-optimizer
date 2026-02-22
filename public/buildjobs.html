@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Build-Jobs – LPBF Optimizer</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<div class="app-layout">
+
+    <nav class="sidebar">
+        <div class="sidebar-logo"><h2>⚙️ LPBF Optimizer</h2><p>Produktionsplanung</p></div>
+        <div class="sidebar-nav">
+            <a href="/static/dashboard.html"    class="nav-item"><span class="icon">📊</span> Dashboard</a>
+            <a href="/static/inquiry.html"       class="nav-item"><span class="icon">📋</span> Anfragen</a>
+            <a href="/static/buildjobs.html"     class="nav-item active"><span class="icon">🏗️</span> Build-Jobs</a>
+            <a href="/static/nesting.html"       class="nav-item"><span class="icon">🔲</span> Nesting</a>
+            <a href="/static/notifications.html" class="nav-item"><span class="icon">✉️</span> E-Mail-Entwürfe</a>
+        </div>
+        <div class="sidebar-footer">
+            <span id="user-name"></span>
+            <a href="#" onclick="logout()" style="color:rgba(255,255,255,0.4);font-size:12px;text-decoration:none;">Abmelden</a>
+        </div>
+    </nav>
+
+    <div class="main-content">
+        <div class="topbar">
+            <h1>Build-Jobs</h1>
+            <div class="topbar-actions">
+                <button class="btn btn-primary" onclick="showForm()">+ Neuer Build-Job</button>
+            </div>
+        </div>
+        <div class="page-body">
+
+            <div id="alert-area"></div>
+
+            <!-- New Build Job Form -->
+            <div class="card" id="job-form" style="display:none">
+                <div class="card-title">🏗️ Neuen Build-Job anlegen</div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Job-Name *</label>
+                        <input type="text" id="f-jobname" placeholder="z.B. BUILD_2025_KW10">
+                    </div>
+                    <div class="form-group">
+                        <label>Plattformfläche XY [cm²] *</label>
+                        <input type="number" id="f-platform" step="0.01" placeholder="z.B. 400.00">
+                    </div>
+                    <div class="form-group">
+                        <label>Geplanter Start</label>
+                        <input type="date" id="f-start">
+                    </div>
+                    <div class="form-group">
+                        <label>Geplantes Ende</label>
+                        <input type="date" id="f-end">
+                    </div>
+                </div>
+                <div style="margin-top:20px;display:flex;gap:10px">
+                    <button class="btn btn-primary" onclick="submitJob()">💾 Build-Job speichern</button>
+                    <button class="btn btn-outline" onclick="hideForm()">Abbrechen</button>
+                </div>
+            </div>
+
+            <!-- Job Details Panel -->
+            <div class="card" id="job-detail" style="display:none">
+                <div class="card-title" id="detail-title">Job Details</div>
+                <div id="detail-content"></div>
+            </div>
+
+            <!-- Jobs Table -->
+            <div class="card">
+                <div class="card-title">🏗️ Alle Build-Jobs</div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Job-Name</th>
+                                <th>Status</th>
+                                <th>Plattformfläche [cm²]</th>
+                                <th>Auslastung</th>
+                                <th>Anfragen</th>
+                                <th>Gesamtbauzeit [h]</th>
+                                <th>Gesamtpreis [€]</th>
+                                <th>Aktionen</th>
+                            </tr>
+                        </thead>
+                        <tbody id="jobs-list">
+                            <tr><td colspan="8" style="text-align:center;color:var(--text-muted)">Lade Daten...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<script src="/static/js/auth.js"></script>
+<script>
+    requireAuth();
+    setUserName();
+    loadJobs();
+
+    function showForm() { document.getElementById('job-form').style.display = 'block'; window.scrollTo(0,0); }
+    function hideForm() { document.getElementById('job-form').style.display = 'none'; }
+
+    async function loadJobs() {
+        const res = await apiFetch('/api/buildjobs/');
+        if (!res) return;
+        const jobs = await res.json();
+        const tbody = document.getElementById('jobs-list');
+
+        if (jobs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted)">Keine Build-Jobs vorhanden</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = jobs.map(j => {
+            const fillClass = j.fill_percent >= 90 ? 'full' : j.fill_percent >= 60 ? 'warn' : '';
+            return `
+            <tr>
+                <td><strong>${j.job_name}</strong></td>
+                <td>${statusBadge(j.status)}</td>
+                <td>${formatNumber(j.platform_xy_surface_cm2)}</td>
+                <td>
+                    <div style="display:flex;align-items:center;gap:8px">
+                        <div class="progress-bar" style="width:100px">
+                            <div class="progress-fill ${fillClass}" style="width:${j.fill_percent}%"></div>
+                        </div>
+                        <span style="font-size:13px">${j.fill_percent}%</span>
+                    </div>
+                </td>
+                <td>${j.inquiry_count}</td>
+                <td>${j.total_build_time_h ? formatNumber(j.total_build_time_h) : '–'}</td>
+                <td>${formatCurrency(j.total_price_eur)}</td>
+                <td style="display:flex;gap:6px">
+                    <button class="btn btn-sm btn-outline" onclick="showDetail(${j.job_id})">🔍 Details</button>
+                    <button class="btn btn-sm btn-accent" onclick="updateStatus(${j.job_id}, 'planned')">📅 Planen</button>
+                </td>
+            </tr>`;
+        }).join('');
+    }
+
+    async function submitJob() {
+        const body = {
+            job_name:                document.getElementById('f-jobname').value.trim(),
+            platform_xy_surface_cm2: parseFloat(document.getElementById('f-platform').value),
+            planned_start_date:      document.getElementById('f-start').value || null,
+            planned_end_date:        document.getElementById('f-end').value || null,
+        };
+
+        if (!body.job_name || !body.platform_xy_surface_cm2) {
+            showAlert('alert-area', 'Bitte Job-Name und Plattformfläche angeben.', 'error');
+            return;
+        }
+
+        const res = await apiFetch('/api/buildjobs/', { method: 'POST', body: JSON.stringify(body) });
+        if (!res) return;
+        const data = await res.json();
+
+        if (res.ok) {
+            showAlert('alert-area', 'Build-Job erfolgreich erstellt.', 'success');
+            hideForm();
+            loadJobs();
+        } else {
+            showAlert('alert-area', data.detail || 'Fehler beim Erstellen.', 'error');
+        }
+    }
+
+    async function showDetail(jobId) {
+        const res = await apiFetch(`/api/buildjobs/${jobId}`);
+        if (!res) return;
+        const job = await res.json();
+
+        document.getElementById('job-detail').style.display = 'block';
+        document.getElementById('detail-title').textContent = `🏗️ ${job.job_name} – Details`;
+
+        const inquiryRows = job.assigned_inquiries.length === 0
+            ? '<p style="color:var(--text-muted)">Noch keine Anfragen zugewiesen.</p>'
+            : `<table><thead><tr><th>Anfragename</th><th>Kundennr.</th><th>Bauteil</th><th>Menge</th><th>XY-Fläche [cm²]</th><th>Stückpreis (kombiniert)</th><th>Preisersparnis</th></tr></thead>
+            <tbody>${job.assigned_inquiries.map(i => `
+                <tr>
+                    <td>${i.inquiry_name}</td>
+                    <td>${i.customer_number}</td>
+                    <td>${i.part_name}</td>
+                    <td>${i.quantity}</td>
+                    <td>${i.projected_xy_surface_cm2 ? formatNumber(i.projected_xy_surface_cm2, 4) : '–'}</td>
+                    <td>${formatCurrency(i.combined_part_price_eur)}</td>
+                    <td>${i.price_reduction_percent ? formatNumber(i.price_reduction_percent) + '%' : '–'}</td>
+                </tr>`).join('')}</tbody></table>`;
+
+        document.getElementById('detail-content').innerHTML = `
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px">
+                <div class="stat-card"><div class="stat-value">${formatNumber(job.platform_xy_surface_cm2)} cm²</div><div class="stat-label">Plattformfläche</div></div>
+                <div class="stat-card"><div class="stat-value">${formatNumber(job.used_xy_surface_cm2)} cm²</div><div class="stat-label">Genutzte Fläche</div></div>
+                <div class="stat-card"><div class="stat-value">${formatNumber(job.available_xy_surface_cm2)} cm²</div><div class="stat-label">Verfügbare Fläche</div></div>
+                <div class="stat-card"><div class="stat-value">${formatCurrency(job.total_price_eur)}</div><div class="stat-label">Gesamtpreis</div></div>
+            </div>
+            <h4 style="margin-bottom:12px">Zugewiesene Anfragen (${job.assigned_inquiries.length})</h4>
+            ${inquiryRows}
+        `;
+        document.getElementById('job-detail').scrollIntoView({behavior:'smooth'});
+    }
+
+    async function updateStatus(jobId, status) {
+        const res = await apiFetch(`/api/buildjobs/${jobId}`, {
+            method: 'PUT',
+            body: JSON.stringify({ status })
+        });
+        if (res && res.ok) {
+            showAlert('alert-area', 'Status aktualisiert.', 'success');
+            loadJobs();
+        }
+    }
+</script>
+</body>
+</html>
