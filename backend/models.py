@@ -6,6 +6,27 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
 
+# Machine → materials mapping (used for validation)
+MACHINE_MATERIALS = {
+    "Xline":  ["AlSi10Mg"],
+    "EOS":    ["AlSi10Mg", "IN718", "IN625"],
+    "M2_alt": ["IN718", "IN625", "1.4404"],
+    "M2_neu": ["AlSi10Mg", "IN718", "IN625", "1.4404"],
+}
+
+MACHINE_PLATFORM_MM2 = {
+    "Xline":  320000,
+    "EOS":    62500,
+    "M2_alt": 62500,
+    "M2_neu": 48400,
+}
+
+# IN718 and IN625 share the same regression model
+def get_material_group(material: str) -> str:
+    if material in ("IN718", "IN625"):
+        return "IN718_IN625"
+    return material
+
 
 class User(Base):
     __tablename__ = "users"
@@ -31,136 +52,115 @@ class Customer(Base):
 class Inquiry(Base):
     __tablename__ = "inquiries"
 
-    inquiry_id                  = Column(Integer, primary_key=True, autoincrement=True)
-    customer_number             = Column(String(100), ForeignKey("customers.customer_number"), nullable=False)
+    inquiry_id      = Column(Integer, primary_key=True, autoincrement=True)
+    inquiry_number  = Column(String(100), nullable=False)
+    order_number    = Column(String(100))
+    customer_number = Column(String(100), ForeignKey("customers.customer_number"), nullable=False)
 
-    inquiry_number              = Column(String(100), nullable=False)
-    order_number                = Column(String(100))
-    inquiry_name                = Column(String(255), nullable=False)
+    inquiry_date    = Column(Date, server_default=func.current_date())
+    order_date      = Column(Date)
+    requested_delivery_date = Column(Date)
+    status          = Column(String(50), default="Anfrage")  # Anfrage or Auftrag
+    machine         = Column(String(50), nullable=False)
 
-    inquiry_date                = Column(Date, server_default=func.current_date())
-    status                      = Column(String(50), default="pending")
-
-    # Part parameters
-    part_name                   = Column(String(255), nullable=False)
-    quantity                    = Column(Integer, nullable=False)
-    part_volume_cm3             = Column(Numeric(10, 4), nullable=False)
-    stock_percent               = Column(Numeric(5, 2))
-    support_volume_percent      = Column(Numeric(5, 2), nullable=False)
-    part_height_mm              = Column(Numeric(8, 2), nullable=False)
-
-    # Time parameters
-    prep_time_h                 = Column(Numeric(6, 2))
-    post_handling_time_h        = Column(Numeric(6, 2))
-    blasting_time_h             = Column(Numeric(6, 2))
-    leak_testing_time_h         = Column(Numeric(6, 2))
-    qc_time_h                   = Column(Numeric(6, 2))
-
-    # XY surface for nesting
-    projected_xy_surface_cm2    = Column(Numeric(10, 4))
-
-    # Lead time
-    requested_delivery_date     = Column(Date)
-    lead_time_flexible          = Column(Boolean, default=False)
-
-    # ML model outputs
-    estimated_part_price_eur    = Column(Numeric(10, 2))
-    estimated_build_time_h      = Column(Numeric(8, 2))
-
-    created_at                  = Column(DateTime, server_default=func.now())
-    updated_at                  = Column(DateTime, server_default=func.now(), onupdate=func.now())
-
-    __table_args__ = (
-        UniqueConstraint("inquiry_number", "part_name", name="uq_inquiry_part"),
-    )
+    created_at      = Column(DateTime, server_default=func.now())
+    updated_at      = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     customer        = relationship("Customer", back_populates="inquiries")
-    job_links       = relationship("BuildJobInquiry", back_populates="inquiry")
-    nesting_logs    = relationship("NestingLog", back_populates="inquiry")
+    parts           = relationship("Part", back_populates="inquiry", cascade="all, delete-orphan")
 
 
-class BuildJob(Base):
-    __tablename__ = "build_jobs"
+class Part(Base):
+    __tablename__ = "parts"
 
-    job_id                      = Column(Integer, primary_key=True, autoincrement=True)
-    job_name                    = Column(String(255), nullable=False)
-    status                      = Column(String(50), default="open")
+    part_id                 = Column(Integer, primary_key=True, autoincrement=True)
+    inquiry_id              = Column(Integer, ForeignKey("inquiries.inquiry_id", ondelete="CASCADE"), nullable=False)
+    material                = Column(String(50), nullable=False)
 
-    platform_xy_surface_cm2     = Column(Numeric(10, 4), nullable=False)
-    used_xy_surface_cm2         = Column(Numeric(10, 4), default=0)
-    available_xy_surface_cm2    = Column(Numeric(10, 4))
+    part_name               = Column(String(255), nullable=False)
+    quantity                = Column(Integer, nullable=False, default=1)
 
-    total_price_eur             = Column(Numeric(10, 2))
-    total_build_time_h          = Column(Numeric(8, 2))
+    # Part parameters
+    part_volume_mm3         = Column(Numeric(12, 2), nullable=False)
+    stock_cm3               = Column(Numeric(10, 4))
+    support_volume_cm3      = Column(Numeric(10, 4), nullable=False)
+    part_height_mm          = Column(Numeric(8, 2), nullable=False)
 
-    planned_start_date          = Column(Date)
-    planned_end_date            = Column(Date)
+    # Time parameters [min]
+    prep_time_min           = Column(Numeric(8, 2))
+    post_handling_time_min  = Column(Numeric(8, 2))
+    blasting_time_min       = Column(Numeric(8, 2))
+    leak_testing_time_min   = Column(Numeric(8, 2))
+    qc_time_min             = Column(Numeric(8, 2))
 
-    created_at                  = Column(DateTime, server_default=func.now())
-    updated_at                  = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    # XY surface [mm²]
+    projected_xy_surface_mm2 = Column(Numeric(12, 2))
 
-    inquiry_links   = relationship("BuildJobInquiry", back_populates="job")
-    nesting_logs    = relationship("NestingLog", back_populates="job")
-    notifications   = relationship("EmailNotification", back_populates="job")
+    # Manually calculated values
+    manual_part_price_eur   = Column(Numeric(10, 2))
+    manual_build_time_h     = Column(Numeric(8, 2))
 
+    created_at              = Column(DateTime, server_default=func.now())
+    updated_at              = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-class BuildJobInquiry(Base):
-    __tablename__ = "build_job_inquiries"
-
-    id                          = Column(Integer, primary_key=True, autoincrement=True)
-    job_id                      = Column(Integer, ForeignKey("build_jobs.job_id"), nullable=False)
-    inquiry_id                  = Column(Integer, ForeignKey("inquiries.inquiry_id"), nullable=False)
-    assigned_at                 = Column(DateTime, server_default=func.now())
-
-    combined_part_price_eur     = Column(Numeric(10, 2))
-    price_reduction_eur         = Column(Numeric(10, 2))
-    price_reduction_percent     = Column(Numeric(5, 2))
-
-    __table_args__ = (
-        UniqueConstraint("job_id", "inquiry_id", name="uq_job_inquiry"),
-    )
-
-    job     = relationship("BuildJob", back_populates="inquiry_links")
-    inquiry = relationship("Inquiry", back_populates="job_links")
+    inquiry     = relationship("Inquiry", back_populates="parts")
+    calc_links  = relationship("CalcPart", back_populates="part")
 
 
-class NestingLog(Base):
-    __tablename__ = "nesting_log"
+class CombinedCalculation(Base):
+    __tablename__ = "combined_calculations"
 
-    log_id                          = Column(Integer, primary_key=True, autoincrement=True)
-    job_id                          = Column(Integer, ForeignKey("build_jobs.job_id"))
-    inquiry_id                      = Column(Integer, ForeignKey("inquiries.inquiry_id"))
+    calc_id             = Column(Integer, primary_key=True, autoincrement=True)
+    calc_number         = Column(String(100), unique=True, nullable=False)
+    calc_name           = Column(String(255), nullable=False)
+    machine             = Column(String(50), nullable=False)
+    material_group      = Column(String(50), nullable=False)
+    platform_surface_mm2 = Column(Numeric(12, 2), nullable=False)
+    start_date          = Column(Date)
+    end_date            = Column(Date)
+    status              = Column(String(50), default="open")
 
-    decision                        = Column(String(50), nullable=False)
+    created_at          = Column(DateTime, server_default=func.now())
+    updated_at          = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    available_surface_before_cm2    = Column(Numeric(10, 4))
-    surface_used_cm2                = Column(Numeric(10, 4))
-    available_surface_after_cm2     = Column(Numeric(10, 4))
+    calc_parts          = relationship("CalcPart", back_populates="calculation", cascade="all, delete-orphan")
+    notifications       = relationship("EmailNotification", back_populates="calculation")
 
-    lead_time_impact_h              = Column(Numeric(8, 2))
-    gpt_reasoning_summary           = Column(Text)
 
-    decided_at                      = Column(DateTime, server_default=func.now())
+class CalcPart(Base):
+    __tablename__ = "calc_parts"
 
-    job     = relationship("BuildJob", back_populates="nesting_logs")
-    inquiry = relationship("Inquiry", back_populates="nesting_logs")
+    id                      = Column(Integer, primary_key=True, autoincrement=True)
+    calc_id                 = Column(Integer, ForeignKey("combined_calculations.calc_id", ondelete="CASCADE"), nullable=False)
+    part_id                 = Column(Integer, ForeignKey("parts.part_id"), nullable=False)
+
+    material_override       = Column(String(50))
+    quantity_override       = Column(Integer)
+
+    calc_part_price_eur     = Column(Numeric(10, 2))
+    calc_build_time_h       = Column(Numeric(8, 2))
+    price_reduction_eur     = Column(Numeric(10, 2))
+    price_reduction_percent = Column(Numeric(5, 2))
+
+    __table_args__ = (UniqueConstraint("calc_id", "part_id", name="uq_calc_part"),)
+
+    calculation = relationship("CombinedCalculation", back_populates="calc_parts")
+    part        = relationship("Part", back_populates="calc_links")
 
 
 class EmailNotification(Base):
     __tablename__ = "email_notifications"
 
     notification_id     = Column(Integer, primary_key=True, autoincrement=True)
+    calc_id             = Column(Integer, ForeignKey("combined_calculations.calc_id"))
     customer_number     = Column(String(100), ForeignKey("customers.customer_number"), nullable=False)
     inquiry_number      = Column(String(100), nullable=False)
     order_number        = Column(String(100))
-    job_id              = Column(Integer, ForeignKey("build_jobs.job_id"))
-
     notification_type   = Column(String(50), nullable=False)
     email_subject       = Column(Text, nullable=False)
     email_body          = Column(Text, nullable=False)
-
-    generated_at        = Column(DateTime, server_default=func.now())
     status              = Column(String(50), default="draft")
+    generated_at        = Column(DateTime, server_default=func.now())
 
     customer    = relationship("Customer", back_populates="notifications")
-    job         = relationship("BuildJob", back_populates="notifications")
+    calculation = relationship("CombinedCalculation", back_populates="notifications")

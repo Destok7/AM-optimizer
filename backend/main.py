@@ -2,77 +2,64 @@ import os
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
-
-load_dotenv()
-
-from database import engine, Base
-from models import User
-from routers.auth import get_password_hash
 from sqlalchemy.orm import Session
 
-# Import all routers
-from routers import auth, inquiries, buildjobs, nesting, notifications, ml
+from database import engine, Base, SessionLocal
+from models import User
+from routers.auth import get_password_hash
+from routers import auth
+from routers.datenbank import router as datenbank_router
+from routers.kalkulation import router as kalkulation_router
+from routers.emails import router as emails_router
+from routers.ml import router as ml_router
 
-# Create tables if they don't exist
+# Create all tables
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(
-    title="LPBF Optimizer",
-    description="Web-Plattform zur Optimierung der LPBF-Produktionsplanung",
-    version="1.0.0"
-)
+app = FastAPI(title="AM-Optimizer", version="2.0")
 
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Register routers
+# Routers
 app.include_router(auth.router)
-app.include_router(inquiries.router)
-app.include_router(buildjobs.router)
-app.include_router(nesting.router)
-app.include_router(notifications.router)
-app.include_router(ml.router)
+app.include_router(datenbank_router)
+app.include_router(kalkulation_router)
+app.include_router(emails_router)
+app.include_router(ml_router)
 
-# Serve frontend static files
-frontend_path = os.path.join(os.path.dirname(__file__), "..", "public")
-if os.path.exists(frontend_path):
-    app.mount("/static", StaticFiles(directory=frontend_path), name="static")
-
-
-@app.get("/", include_in_schema=False)
-def serve_index():
-    index_path = os.path.join(frontend_path, "index.html")
-    return FileResponse(index_path)
+# Static files
+app.mount("/static", StaticFiles(directory="../public"), name="static")
 
 
 @app.get("/health")
-def health_check():
-    return {"status": "ok", "service": "LPBF Optimizer"}
+def health():
+    return {"status": "ok"}
+
+
+@app.get("/")
+def serve_index():
+    return FileResponse("../public/index.html")
+
+
+@app.get("/{page}.html")
+def serve_page(page: str):
+    path = f"../public/{page}.html"
+    if os.path.exists(path):
+        return FileResponse(path)
+    return FileResponse("../public/index.html")
 
 
 @app.on_event("startup")
 def create_default_admin():
-    """Creates a default admin user on first startup if no users exist."""
-    db = Session(bind=engine)
+    db: Session = SessionLocal()
     try:
-        user_count = db.query(User).count()
-        if user_count == 0:
-            default_user = User(
+        existing = db.query(User).filter(User.username == os.getenv("ADMIN_USERNAME", "admin")).first()
+        if not existing:
+            admin = User(
                 username=os.getenv("ADMIN_USERNAME", "admin"),
-                hashed_password=get_password_hash(os.getenv("ADMIN_PASSWORD", "lpbf2024!")),
+                hashed_password=get_password_hash(os.getenv("ADMIN_PASSWORD", "admin123")),
                 full_name="Administrator",
-                is_active=True
+                is_active=True,
             )
-            db.add(default_user)
+            db.add(admin)
             db.commit()
-            print("✅ Standard-Admin-Benutzer erstellt: admin / lpbf2024!")
     finally:
         db.close()

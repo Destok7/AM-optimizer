@@ -1,123 +1,84 @@
 import os
 from openai import OpenAI
-from dotenv import load_dotenv
-
-load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
-def evaluate_lead_time(
-    inquiry_name: str,
-    customer_number: str,
-    requested_delivery_date: str,
-    lead_time_flexible: bool,
-    current_build_time_h: float,
-    combined_build_time_h: float
-) -> str:
-    """
-    GPT-4 evaluates whether combining this inquiry into a build job
-    is advisable given the lead time impact.
-    """
-    prompt = f"""
-Du bist ein Experte für additive Fertigung und Produktionsplanung (LPBF - Laser Powder Bed Fusion).
+def generate_email(calc_data: dict, inquiry_number: str, order_number: str = None) -> dict:
+    """Generate a German notification email based on combined calculation results."""
 
-Bewerte, ob es sinnvoll ist, die folgende Anfrage in einen kombinierten Build-Job einzubeziehen,
-unter Berücksichtigung der Lieferzeitauswirkungen.
+    # Build parts summary for the prompt
+    parts_summary = ""
+    for p in calc_data.get("parts", []):
+        if p.get("inquiry_number") != inquiry_number:
+            continue
+        manual = p.get("manual_part_price_eur") or 0
+        calc = p.get("calc_part_price_eur") or 0
+        savings_eur = p.get("price_reduction_eur") or 0
+        savings_pct = p.get("price_reduction_percent") or 0
+        parts_summary += (
+            f"- {p['part_name']} (Anzahl: {p['quantity']}): "
+            f"Ursprünglicher Stückpreis: {manual:.2f} €, "
+            f"Neuer Stückpreis: {calc:.2f} €, "
+            f"Ersparnis: {savings_eur:.2f} € ({savings_pct:.1f}%)\n"
+        )
 
-Anfrage: {inquiry_name}
-Kundennummer: {customer_number}
-Gewünschtes Lieferdatum: {requested_delivery_date or 'nicht angegeben'}
-Lieferzeit flexibel: {'Ja' if lead_time_flexible else 'Nein'}
-Aktuelle Bauzeit (einzeln): {current_build_time_h:.1f} Stunden
-Neue Bauzeit (kombiniert): {combined_build_time_h:.1f} Stunden
-Zeitliche Mehrbelastung: {combined_build_time_h - current_build_time_h:.1f} Stunden
+    ref = order_number if order_number else inquiry_number
+    ref_type = "Auftrag" if order_number else "Anfrage"
 
-Gib eine kurze, klare Einschätzung (2-3 Sätze) auf Deutsch, ob die Kombination empfehlenswert ist
-und warum. Berücksichtige das Lieferdatum und die Flexibilität des Kunden.
-"""
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=300,
-        temperature=0.3
-    )
-    return response.choices[0].message.content.strip()
+    prompt = f"""Du bist ein professioneller Kundenberater eines LPBF-Fertigungsunternehmens.
+Schreibe eine professionelle, freundliche E-Mail auf Deutsch an einen Kunden.
 
+Kontext:
+- {ref_type}: {ref}
+- Maschine: {calc_data.get('machine')}
+- Kalkulationsname: {calc_data.get('calc_name')}
+- Ursprünglicher Gesamtpreis: {calc_data.get('total_manual_price', 0):.2f} €
+- Neuer Gesamtpreis (kombinierte Kalkulation): {calc_data.get('total_calc_price', 0):.2f} €
+- Gesamtersparnis: {calc_data.get('total_savings_eur', 0):.2f} € ({calc_data.get('total_savings_pct', 0):.1f}%)
+- Ursprüngliche Bauzeit: wird aus Einzelkalkulation übernommen
+- Neue kombinierte Bauzeit: {calc_data.get('combined_build_time_h', 0):.1f} h
 
-def generate_email_draft(
-    notification_type: str,
-    customer_number: str,
-    inquiry_number: str,
-    order_number: str,
-    part_name: str,
-    quantity: int,
-    original_price: float,
-    new_price: float,
-    price_reduction_percent: float,
-    original_build_time_h: float,
-    new_build_time_h: float
-) -> dict:
-    """
-    GPT-4 generates a professional German email draft for the customer.
-    Returns subject and body.
-    """
-    if notification_type == "price_reduction_current":
-        context = "aktuellen Auftrags/Anfrage"
-        intro = "Im Rahmen unserer Produktionsplanung haben wir die Möglichkeit identifiziert, Ihre aktuelle Anfrage mit anderen Aufträgen zu kombinieren."
-    else:
-        context = "früheren Anfrage"
-        intro = "Im Rahmen unserer laufenden Produktionsplanung haben wir festgestellt, dass Ihre frühere Anfrage nun zu einem günstigeren Preis realisiert werden kann."
-
-    prompt = f"""
-Erstelle eine professionelle E-Mail auf Deutsch an einen Kunden eines LPBF-Fertigungsunternehmens.
-
-Kontext: {intro}
-
-Details:
-- Kundennummer: {customer_number}
-- Anfrage-/Auftragsnummer: {inquiry_number or order_number or 'nicht angegeben'}
-- Bauteilname: {part_name}
-- Menge: {quantity} Stück
-- Ursprünglicher Stückpreis: {original_price:.2f} €
-- Neuer Stückpreis: {new_price:.2f} €
-- Preisersparnis: {price_reduction_percent:.1f}%
-- Ursprüngliche Bauzeit: {original_build_time_h:.1f} Stunden
-- Neue Bauzeit (kombiniert): {new_build_time_h:.1f} Stunden
-
-Erstelle:
-1. Einen prägnanten Betreff
-2. Eine professionelle E-Mail (mit Anrede "Sehr geehrte Damen und Herren,", da kein Name bekannt)
+Bauteilübersicht:
+{parts_summary}
 
 Die E-Mail soll:
-- Den Preisvorteil klar kommunizieren
-- Die längere Bauzeit transparent erklären
-- Um Rückmeldung bitten, ob der Kunde dem zustimmt
-- Professionell und freundlich sein
-- Mit "Mit freundlichen Grüßen" enden (ohne Absendername)
+1. Die Vorteile der kombinierten Fertigung klar erläutern
+2. Die Preisersparnis pro Bauteil und insgesamt hervorheben
+3. Die neue Bauzeit nennen
+4. Professionell und kundenorientiert formuliert sein
+5. Eine klare Betreffzeile haben
 
 Antworte im Format:
 BETREFF: [Betreff hier]
-EMAIL: [E-Mail-Text hier]
-"""
+INHALT:
+[E-Mail-Inhalt hier]"""
+
     response = client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-4",
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=600,
-        temperature=0.4
+        max_tokens=800,
+        temperature=0.7,
     )
 
-    content = response.choices[0].message.content.strip()
+    text = response.choices[0].message.content.strip()
 
     # Parse subject and body
+    lines = text.split("\n")
     subject = ""
-    body = ""
-    if "BETREFF:" in content and "EMAIL:" in content:
-        parts = content.split("EMAIL:", 1)
-        subject = parts[0].replace("BETREFF:", "").strip()
-        body = parts[1].strip()
-    else:
-        subject = "Preisoptimierung Ihrer Anfrage"
-        body = content
+    body_lines = []
+    in_body = False
+
+    for line in lines:
+        if line.startswith("BETREFF:"):
+            subject = line.replace("BETREFF:", "").strip()
+        elif line.startswith("INHALT:"):
+            in_body = True
+        elif in_body:
+            body_lines.append(line)
+
+    body = "\n".join(body_lines).strip()
+    if not body:
+        body = text
 
     return {"subject": subject, "body": body}

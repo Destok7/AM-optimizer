@@ -2,171 +2,150 @@
 <html lang="de">
 <head>
     <meta charset="UTF-8">
-    <title>Dashboard – LPBF Optimizer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard – AM-Optimizer</title>
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
 <div class="app-layout">
-
-    <!-- Sidebar -->
-    <nav class="sidebar">
-        <div class="sidebar-logo">
-            <h2>⚙️ LPBF Optimizer</h2>
-            <p>Produktionsplanung</p>
-        </div>
-        <div class="sidebar-nav">
-            <a href="/static/dashboard.html"     class="nav-item active"><span class="icon">📊</span> Dashboard</a>
-            <a href="/static/inquiry.html"        class="nav-item"><span class="icon">📋</span> Anfragen</a>
-            <a href="/static/buildjobs.html"      class="nav-item"><span class="icon">🏗️</span> Build-Jobs</a>
-            <a href="/static/nesting.html"        class="nav-item"><span class="icon">🔲</span> Nesting</a>
-            <a href="/static/notifications.html"  class="nav-item"><span class="icon">✉️</span> E-Mail-Entwürfe</a>
-        </div>
-        <div class="sidebar-footer">
-            <span id="user-name">Benutzer</span>
-            <a href="#" onclick="logout()" style="color:rgba(255,255,255,0.4);font-size:12px;text-decoration:none;">Abmelden</a>
-        </div>
-    </nav>
-
-    <!-- Main -->
+    <div id="sidebar-container"></div>
     <div class="main-content">
-        <div class="topbar">
+        <div class="top-bar">
             <h1>Dashboard</h1>
+            <span id="username-display" style="font-size:13px;color:#718096;"></span>
         </div>
         <div class="page-body">
-
             <div class="stats-grid" id="stats-grid">
-                <div class="stat-card"><div class="stat-value" id="stat-pending">–</div><div class="stat-label">Offene Anfragen</div></div>
-                <div class="stat-card"><div class="stat-value" id="stat-combined">–</div><div class="stat-label">Kombinierte Anfragen</div></div>
-                <div class="stat-card"><div class="stat-value" id="stat-jobs">–</div><div class="stat-label">Aktive Build-Jobs</div></div>
-                <div class="stat-card"><div class="stat-value" id="stat-drafts">–</div><div class="stat-label">E-Mail-Entwürfe</div></div>
+                <div class="stat-card blue">
+                    <div class="stat-label">Anfragen in Datenbank</div>
+                    <div class="stat-value" id="stat-inquiries">–</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Davon Aufträge</div>
+                    <div class="stat-value" id="stat-orders">–</div>
+                </div>
+                <div class="stat-card green">
+                    <div class="stat-label">Kombinierte Kalkulationen</div>
+                    <div class="stat-value" id="stat-calcs">–</div>
+                </div>
+                <div class="stat-card orange">
+                    <div class="stat-label">E-Mail-Entwürfe</div>
+                    <div class="stat-value" id="stat-emails">–</div>
+                </div>
             </div>
 
-            <!-- Open Build Jobs -->
             <div class="card">
-                <div class="card-title">🏗️ Offene Build-Jobs – Plattformauslastung</div>
-                <div class="table-wrapper">
+                <div class="card-header">
+                    <div class="card-title">ML-Modell Status</div>
+                    <button class="btn btn-primary btn-sm" onclick="trainModels()">
+                        🧠 Modelle trainieren
+                    </button>
+                </div>
+                <div id="model-status-table">Lade...</div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">Letzte Kalkulationen</div>
+                    <a href="/kalkulation.html" class="btn btn-outline btn-sm">Alle anzeigen →</a>
+                </div>
+                <div class="table-container">
                     <table>
                         <thead>
                             <tr>
-                                <th>Job-Name</th>
+                                <th>Kalk.-Nr.</th>
+                                <th>Name</th>
+                                <th>Maschine</th>
+                                <th>Material</th>
+                                <th>Orig. Preis</th>
+                                <th>Kalk. Preis</th>
+                                <th>Ersparnis</th>
                                 <th>Status</th>
-                                <th>Auslastung</th>
-                                <th>Verfügbare Fläche (cm²)</th>
-                                <th>Anfragen</th>
-                                <th>Gesamtpreis</th>
                             </tr>
                         </thead>
-                        <tbody id="jobs-table-body">
-                            <tr><td colspan="6" style="text-align:center;color:var(--text-muted)">Lade Daten...</td></tr>
+                        <tbody id="recent-calcs-body">
+                            <tr><td colspan="8" style="text-align:center;color:#718096">Lade...</td></tr>
                         </tbody>
                     </table>
                 </div>
             </div>
-
-            <!-- Recent Inquiries -->
-            <div class="card">
-                <div class="card-title">📋 Neueste Anfragen</div>
-                <div class="table-wrapper">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Anfragename</th>
-                                <th>Kundennr.</th>
-                                <th>Bauteil</th>
-                                <th>Menge</th>
-                                <th>Status</th>
-                                <th>Geschätzter Preis</th>
-                                <th>Datum</th>
-                            </tr>
-                        </thead>
-                        <tbody id="inquiries-table-body">
-                            <tr><td colspan="7" style="text-align:center;color:var(--text-muted)">Lade Daten...</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
         </div>
     </div>
 </div>
 
 <script src="/static/js/auth.js"></script>
+<script src="/static/js/app.js"></script>
 <script>
-    requireAuth();
-    setUserName();
+checkAuth();
+document.getElementById('sidebar-container').innerHTML = renderSidebar('dashboard');
+document.getElementById('username-display').textContent = localStorage.getItem('username') || '';
 
-    async function loadDashboard() {
-        // Load inquiries
-        const inqRes = await apiFetch('/api/inquiries/');
-        if (!inqRes) return;
-        const inquiries = await inqRes.json();
+async function loadDashboard() {
+    try {
+        const [inquiries, calcs, emails, mlStatus] = await Promise.all([
+            apiFetch('/api/datenbank/'),
+            apiFetch('/api/kalkulation/'),
+            apiFetch('/api/emails/'),
+            apiFetch('/api/ml/status'),
+        ]);
 
-        const pending  = inquiries.filter(i => i.status === 'pending').length;
-        const combined = inquiries.filter(i => i.status === 'combined').length;
+        document.getElementById('stat-inquiries').textContent = inquiries.length;
+        document.getElementById('stat-orders').textContent = inquiries.filter(i => i.status === 'Auftrag').length;
+        document.getElementById('stat-calcs').textContent = calcs.length;
+        document.getElementById('stat-emails').textContent = emails.length;
 
-        document.getElementById('stat-pending').textContent  = pending;
-        document.getElementById('stat-combined').textContent = combined;
+        // ML status table
+        const models = mlStatus.models || [];
+        let html = '<table><thead><tr><th>Modell</th><th>Status</th></tr></thead><tbody>';
+        models.forEach(m => {
+            html += `<tr>
+                <td>${m.model_key}</td>
+                <td>${m.trained
+                    ? '<span class="badge badge-success">✓ Trainiert</span>'
+                    : '<span class="badge badge-secondary">Nicht trainiert</span>'
+                }</td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        document.getElementById('model-status-table').innerHTML = html;
 
-        // Recent 10
-        const recent = inquiries.slice(0, 10);
-        const inqBody = document.getElementById('inquiries-table-body');
-        if (recent.length === 0) {
-            inqBody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted)">Keine Anfragen vorhanden</td></tr>';
+        // Recent calcs
+        const tbody = document.getElementById('recent-calcs-body');
+        if (calcs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#718096">Keine Kalkulationen vorhanden</td></tr>';
         } else {
-            inqBody.innerHTML = recent.map(i => `
+            tbody.innerHTML = calcs.slice(0, 5).map(c => `
                 <tr>
-                    <td><strong>${i.inquiry_name}</strong></td>
-                    <td>${i.customer_number}</td>
-                    <td>${i.part_name}</td>
-                    <td>${i.quantity}</td>
-                    <td>${statusBadge(i.status)}</td>
-                    <td>${formatCurrency(i.estimated_part_price_eur)}</td>
-                    <td>${formatDate(i.inquiry_date)}</td>
+                    <td><a href="/kalkulation.html">${c.calc_number}</a></td>
+                    <td>${c.calc_name}</td>
+                    <td>${c.machine}</td>
+                    <td>${c.material_group === 'IN718_IN625' ? 'IN718/IN625' : c.material_group}</td>
+                    <td>${formatEur(c.total_manual_price)}</td>
+                    <td>${formatEur(c.total_calc_price)}</td>
+                    <td class="${c.total_savings_eur > 0 ? 'savings-positive' : ''}">${formatEur(c.total_savings_eur)}</td>
+                    <td><span class="badge badge-${c.status === 'open' ? 'info' : 'success'}">${c.status}</span></td>
                 </tr>
             `).join('');
         }
-
-        // Load build jobs
-        const jobRes = await apiFetch('/api/buildjobs/');
-        if (!jobRes) return;
-        const jobs = await jobRes.json();
-
-        const activeJobs = jobs.filter(j => ['open','planned'].includes(j.status));
-        document.getElementById('stat-jobs').textContent = activeJobs.length;
-
-        const jobBody = document.getElementById('jobs-table-body');
-        if (activeJobs.length === 0) {
-            jobBody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">Keine aktiven Build-Jobs</td></tr>';
-        } else {
-            jobBody.innerHTML = activeJobs.map(j => {
-                const fillClass = j.fill_percent >= 90 ? 'full' : j.fill_percent >= 60 ? 'warn' : '';
-                return `
-                <tr>
-                    <td><strong>${j.job_name}</strong></td>
-                    <td>${statusBadge(j.status)}</td>
-                    <td>
-                        <div style="display:flex;align-items:center;gap:8px">
-                            <div class="progress-bar" style="width:120px">
-                                <div class="progress-fill ${fillClass}" style="width:${j.fill_percent}%"></div>
-                            </div>
-                            <span style="font-size:13px">${j.fill_percent}%</span>
-                        </div>
-                    </td>
-                    <td>${formatNumber(j.available_xy_surface_cm2)}</td>
-                    <td>${j.inquiry_count}</td>
-                    <td>${formatCurrency(j.total_price_eur)}</td>
-                </tr>`;
-            }).join('');
-        }
-
-        // Load notifications
-        const notifRes = await apiFetch('/api/notifications/?status=draft');
-        if (!notifRes) return;
-        const notifs = await notifRes.json();
-        document.getElementById('stat-drafts').textContent = notifs.length;
+    } catch(e) {
+        showToast('Fehler beim Laden: ' + e.message, 'error');
     }
+}
 
-    loadDashboard();
+async function trainModels() {
+    try {
+        showToast('Modelle werden trainiert...', 'info');
+        const result = await apiFetch('/api/ml/train', { method: 'POST' });
+        result.results.forEach(r => {
+            showToast(r.message, r.success ? 'success' : 'error');
+        });
+        loadDashboard();
+    } catch(e) {
+        showToast('Training fehlgeschlagen: ' + e.message, 'error');
+    }
+}
+
+loadDashboard();
 </script>
 </body>
 </html>
