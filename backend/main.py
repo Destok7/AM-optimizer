@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from database import engine, Base, SessionLocal
 from models import User
@@ -13,8 +14,25 @@ from routers.kalkulation import router as kalkulation_router
 from routers.emails import router as emails_router
 from routers.ml import router as ml_router
 
-# Create all tables
-Base.metadata.create_all(bind=engine)
+
+def run_migration():
+    """Drop old v1 tables and create new v2 schema."""
+    migration_sql = """
+        DROP TABLE IF EXISTS nesting_log CASCADE;
+        DROP TABLE IF EXISTS build_job_inquiries CASCADE;
+        DROP TABLE IF EXISTS build_jobs CASCADE;
+        DROP TABLE IF EXISTS email_notifications CASCADE;
+        DROP TABLE IF EXISTS inquiries CASCADE;
+        DROP TABLE IF EXISTS customers CASCADE;
+    """
+    with engine.connect() as conn:
+        conn.execute(text(migration_sql))
+        conn.commit()
+    # Now create all v2 tables fresh
+    Base.metadata.create_all(bind=engine)
+
+
+run_migration()
 
 app = FastAPI(title="AM-Optimizer", version="2.0")
 
