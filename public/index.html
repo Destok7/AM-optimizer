@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LPBF Optimizer – Anmeldung</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<div class="login-page">
+    <div class="login-box">
+        <h1>⚙️ LPBF Optimizer</h1>
+        <p>Optimierung der additiven Fertigungsplanung</p>
+
+        <div id="alert-box"></div>
+
+        <div class="form-group" style="margin-bottom:16px">
+            <label>Benutzername</label>
+            <input type="text" id="username" placeholder="Benutzername" autocomplete="username">
+        </div>
+        <div class="form-group" style="margin-bottom:24px">
+            <label>Passwort</label>
+            <input type="password" id="password" placeholder="Passwort" autocomplete="current-password">
+        </div>
+        <button class="btn btn-primary" style="width:100%" onclick="login()">Anmelden</button>
+    </div>
+</div>
+
+<script>
+    // Redirect if already logged in
+    if (localStorage.getItem('token')) {
+        window.location.href = '/static/dashboard.html';
+    }
+
+    document.getElementById('password').addEventListener('keydown', e => {
+        if (e.key === 'Enter') login();
+    });
+
+    async function login() {
+        const username = document.getElementById('username').value.trim();
+        const password = document.getElementById('password').value;
+
+        if (!username || !password) {
+            showAlert('Bitte Benutzername und Passwort eingeben.', 'error');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('username', username);
+        formData.append('password', password);
+
+        try {
+            const res = await fetch('/api/auth/login', { method: 'POST', body: formData });
+            const data = await res.json();
+
+            if (res.ok) {
+                localStorage.setItem('token', data.access_token);
+                localStorage.setItem('full_name', data.full_name);
+                window.location.href = '/static/dashboard.html';
+            } else {
+                showAlert(data.detail || 'Anmeldung fehlgeschlagen.', 'error');
+            }
+        } catch (e) {
+            showAlert('Verbindungsfehler. Bitte erneut versuchen.', 'error');
+        }
+    }
+
+    function showAlert(msg, type) {
+        document.getElementById('alert-box').innerHTML =
+            `<div class="alert alert-${type}">${msg}</div>`;
+    }
+</script>
+</body>
+</html>
